@@ -13,6 +13,37 @@
         <% } %>
         <link href="https://playentry.org/lib/entry-tool/dist/entry-tool.css" rel="stylesheet" />
         <link href="https://playentry.org/lib/entry-lms/dist/assets/app.css" rel="stylesheet" />
+        <!-- [변경: 2026-08-24 17:38, 김병현 수정] 인공지능 모델 학습 팝업(entry-ml) 스타일 추가 -->
+        <link rel="stylesheet" href="https://playentry.org/lib/entry-ml/dist/entry-ml.css" />
+        <style>
+            /* [변경: 2026-08-24 19:30, 김병현 수정] 인공지능 팝업 컨테이너 위치 기준 지정
+               팝업 루트가 position:absolute 라서 기준이 되는 컨테이너가 없으면
+               워크스페이스 아래쪽(화면 밖)에 높이 0으로 깔려 보이지 않는다. */
+            #EntryLearningPopupContainer,
+            #EntryLearningPredictContainer,
+            #popup-container {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                z-index: 100;
+                /* 팝업이 닫힌 상태에서 워크스페이스 클릭을 막지 않도록 한다 */
+                pointer-events: none;
+            }
+            /* [변경: 2026-08-24 21:05, 김병현 수정] 테이블 팝업은 데이터분석 모달 위에 떠야 한다.
+               데이터분석 모달(.table-modal)이 z-index:1000 이라
+               기본값(100)으로 두면 "테이블 추가하기" 를 눌러도
+               팝업이 모달 뒤에 가려져서 아무 반응이 없는 것처럼 보인다. */
+            #popup-container {
+                z-index: 1100;
+            }
+            #EntryLearningPopupContainer > *,
+            #EntryLearningPredictContainer > *,
+            #popup-container > * {
+                pointer-events: auto;
+            }
+        </style>
     </head>
 
     <body>
@@ -30,6 +61,11 @@
             </button>
         </section>
         <div id="workspace"></div>
+        <!-- [변경: 2026-08-24 17:38, 김병현 수정] 인공지능 모델 학습/데이터 입력 팝업 컨테이너 추가 -->
+        <div id="EntryLearningPopupContainer"></div>
+        <div id="EntryLearningPredictContainer"></div>
+        <!-- [변경: 2026-08-24 20:10, 김병현 수정] 테이블 불러오기 등 entry-tool 공용 팝업 컨테이너 -->
+        <div id="popup-container"></div>
 
         <!--language-->
         <script src="../extern/lang/ko.js"></script>
@@ -50,9 +86,13 @@
             type="text/javascript"
             src="https://playentry.org/lib/SoundJS/lib/flashaudioplugin-0.6.0.min.js"
         ></script>
-        <script
+        <!-- <script
             type="text/javascript"
             src="https://playentry.org/lib/lodash/dist/lodash.min.js"
+        ></script> -->
+        <script
+            type="text/javascript"
+            src="../js/lodash.min.js"
         ></script>
         <script
             type="text/javascript"
@@ -141,6 +181,12 @@
             src="https://entry-cdn.pstatic.net/module/legacy-video/index.js?v=241031-202112"
         ></script>
 
+        <!-- [변경: 2026-08-24 17:38, 김병현 수정] 인공지능 모델 학습 팝업(entry-ml) 및 의존 라이브러리 추가 -->
+        <!-- [변경: 2026-08-24 19:30, 김병현 수정] tfjs 는 entryjs 와 entry-ml 이 각각 번들로 포함하므로
+             CDN 사본을 추가하면 kernel 중복 등록 경고가 발생한다. 그래서 싣지 않는다. -->
+        <script src="https://cdn.jsdelivr.net/npm/localforage@1.10.0/dist/localforage.min.js"></script>
+        <script src="https://playentry.org/lib/entry-ml/dist/entry-ml.js"></script>
+
 
         <% for (var chunk in htmlWebpackPlugin.files.js) { %>
         <script src="<%= htmlWebpackPlugin.files.js[chunk] %>"></script>
@@ -187,6 +233,135 @@
                 Entry.creationChangedEvent = new Entry.Event(window);
                 Entry.init(document.getElementById('workspace'), initOption);
                 Entry.loadProject();
+
+                // [변경: 2026-08-24 17:38, 김병현 수정] 인공지능 모델 학습 팝업(entry-ml) 연동
+                // 브라우저 indexedDB 에 학습 모델을 로컬 저장한다
+                var dataApi = new Entryml.MlDataApi();
+                Entry.aiLearning.setDataApi(dataApi);
+
+                // 모델 학습하기 팝업 인스턴스
+                var learningPopup = new Entryml.Popup({
+                    container: document.getElementById('EntryLearningPopupContainer'),
+                    isShow: false,
+                    dataApi: dataApi,
+                    data: {
+                        tokenizerPath: 'https://playentry.org/lib/entry-ml/dist/resources',
+                    },
+                });
+
+                learningPopup
+                    .on('submit', function(aiLearningBlockItem) {
+                        // 학습 완료 시 인공지능 블록 카테고리에 학습 모델 블록을 추가한다
+                        Entry.dispatchEvent('popupAddBlocks', { category: 'ai_utilize' });
+                        Entry.playground.setAiLearningBlock(aiLearningBlockItem);
+                    })
+                    .on('remove', function() {
+                        Entry.aiLearning.removeLearningBlocks();
+                    })
+                    .on('close', function() {
+                        Entry.aiLearning.reload();
+                    });
+
+                // 블록 메뉴 > 인공지능 > 모델 학습하기 버튼 클릭 시 발생하는 이벤트
+                Entry.addEventListener('openAIUtilizeTrainManager', function() {
+                    learningPopup.show({
+                        tables: Entry.playground.dataTable.getTableJSON(),
+                        model: Entry.aiLearning.getId(),
+                        project: 'local-example',
+                        availables: [
+                            'image',
+                            'speech',
+                            'text',
+                            'number',
+                            'cluster',
+                            'regression',
+                            'logisticRegression',
+                            'decisionTree',
+                            'svm',
+                        ],
+                    });
+                });
+
+                // 실행 중 데이터 입력 팝업
+                var learningPredict = new Entryml.Predict({
+                    container: document.getElementById('EntryLearningPredictContainer'),
+                    isShow: false,
+                });
+                var isPauseClicked = false;
+
+                learningPredict
+                    .on('show', function() {
+                        isPauseClicked = false;
+                        if (Entry.engine.state === 'run') {
+                            Entry.engine.togglePause({ visible: false });
+                        }
+                    })
+                    .on('pause', function() {
+                        if (!isPauseClicked) {
+                            isPauseClicked = true;
+                            Entry.engine.togglePause({ visible: false });
+                        }
+                        Entry.engine.togglePause();
+                    })
+                    .on('stop', function() {
+                        Entry.engine.toggleStop();
+                    });
+
+                Entry.addEventListener('openMLInputPopup', function(predictInfoItem) {
+                    if (Entry.engine.state === 'run') {
+                        Entry.engine.togglePause({ visible: false });
+                    }
+                    learningPredict.show({
+                        title: '데이터 입력',
+                        predictInfo: Object.assign({}, predictInfoItem),
+                    });
+                });
+
+                // [변경: 2026-08-24 20:10, 김병현 수정] 데이터 테이블 "테이블 추가하기" 팝업 연동
+                // DataTable 의 addTable 이 openTableManager 만 dispatch 하고
+                // entryjs 안에는 리스너가 없어서 클릭해도 아무 반응이 없었다.
+                var commonPopup = new EntryTool.Popup({
+                    container: document.getElementById('popup-container'),
+                    isShow: false,
+                    theme: 'entry',
+                    data: { data: { data: [] } },
+                });
+
+                commonPopup.on('submit', function(datas) {
+                    // 테이블 불러오기에서 선택한 테이블을 데이터분석에 추가한다
+                    (datas.selected || []).forEach(function(tableItem) {
+                        Entry.playground.dataTable.addSources(tableItem);
+                        Entry.creationChangedEvent.notify();
+                    });
+                });
+
+                // [변경: 2026-08-24 20:35, 김병현 수정] "테이블 새로 만들기"(draw 이벤트) 처리
+                // entry-tool 팝업은 UI 만 담당하고 데이터 생성은 호스트가 해야 한다.
+                // playentry 는 서버 API 로 처리하지만 로컬 예제에서는 빈 테이블을 직접 만든다.
+                commonPopup.on('draw', function() {
+                    Entry.playground.dataTable.addSources([
+                        {
+                            name: Entry.getOrderedName(
+                                '테이블',
+                                Entry.playground.dataTable.tables,
+                                'name'
+                            ),
+                            fields: ['A', 'B', 'C'],
+                            data: [['', '', ''], ['', '', ''], ['', '', '']],
+                        },
+                    ]);
+                    Entry.creationChangedEvent.notify();
+                });
+
+                Entry.addEventListener('openTableManager', function() {
+                    commonPopup.show({ type: 'table' });
+                });
+
+                // [변경: 2026-08-24 17:38, 김병현 수정] 인공지능 블록 불러오기 버튼 임시 구현
+                // TODO: 정식 선택 팝업이 아니라, 예제 확인용으로 tts/translate 블록을 즉시 추가하는 임시 코드다.
+                Entry.addEventListener('openAIUtilizeBlockManager', function() {
+                    Entry.playground.addAIUtilizeBlocks([{ name: 'tts' }, { name: 'translate' }]);
+                });
             });
         </script>
     </body>
