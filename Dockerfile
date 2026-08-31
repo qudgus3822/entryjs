@@ -44,9 +44,19 @@ RUN sed -i 's/listen\( *\)80;/listen\19005;/' /etc/nginx/conf.d/default.conf
 # index.html 은 루트에, 나머지는 HTML 이 참조하는 이름 그대로 둔다.
 #   extern/ : 언어팩(lang/ko.js), 유틸(util/static.js), AI 워커·wasm·모델
 #   js/     : lodash 등 예제가 직접 부르는 스크립트
+#   images/ : 블록 아이콘, 버튼, 커서 등 화면에 보이는 그림 전부
+#
+# [변경: 2026-08-31 10:51, 김병현 수정] images/ 복사 누락으로 모든 그림이 깨지던 문제 수정.
+#   entryjs 는 그림을 두 경로로 부르는데 둘 다 결국 루트의 /images/ 를 가리킨다.
+#     1) JS  : example.ejs 가 libDir/entryDir 을 빈 문자열로 주므로
+#              Entry.mediaFilePath 가 '/images/' 가 된다 (src/util/init.js:127)
+#     2) CSS : dist/entry.css 안의 url(../images/...) 가 /dist/ 기준으로 풀려 /images/ 가 된다
+#   webpack dev server 는 repo 루트를 통째로 서비스해서 이게 그냥 됐지만,
+#   nginx 이미지에는 images/ 가 없어서 전부 404 였다.
 COPY --from=builder /app/dist        /usr/share/nginx/html/dist
 COPY --from=builder /app/extern      /usr/share/nginx/html/extern
 COPY --from=builder /app/js          /usr/share/nginx/html/js
+COPY --from=builder /app/images      /usr/share/nginx/html/images
 COPY --from=builder /app/dist/index.html /usr/share/nginx/html/index.html
 
 EXPOSE 9005
